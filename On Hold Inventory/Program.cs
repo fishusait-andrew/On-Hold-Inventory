@@ -77,7 +77,7 @@ internal static class Program
                 Timeout = TimeSpan.FromSeconds(120)
             };
 
-            await AuthenticateAsync(http, baseUrl, clientId, certificateId, privateKeyPath);
+            await AuthenticateAsync(http, baseUrl, clientId, certificateId, keys.privateKey);
 
             //items.Add(new Item{});
 
@@ -454,14 +454,8 @@ internal static class Program
 
         using var rsa = RSA.Create();
         string privateKey;
-        if (keys.isDebug)
-        {
-            privateKey = await File.ReadAllTextAsync(privateKeyPath);
-        }
-        else
-        {
-            privateKey = keys.privateKey;
-        }
+        privateKey = privateKeyPath;
+
         rsa.ImportFromPem(privateKey);
 
         byte[] signature = rsa.SignData(Encoding.UTF8.GetBytes(unsignedJwt), HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
