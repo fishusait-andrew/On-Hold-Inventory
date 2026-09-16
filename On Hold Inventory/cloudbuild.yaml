@@ -33,7 +33,7 @@ steps:
       - --quiet
 
 substitutions:
-  _REGION: us-central1
+  _REGION: us-east
   _REPOSITORY: netsuite-jobs
   _JOB: netsuite-on-hold-inventory
 
