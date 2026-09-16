@@ -8,8 +8,6 @@ using System.Text;
 using System.Text.Json;
 using System.Threading.Tasks;
 
-
-
 internal static class Program
 {
     //fsbuufv
@@ -25,7 +23,11 @@ internal static class Program
         public int newQuantityOnHold { get; set; }
     }
 
-
+    public static class keys
+    {
+        public static bool isDebug { get; set; } = false;
+        public static string privateKey { get; set; } = "";
+    }
 
     private static async Task Main(string[] args)
     {
@@ -36,8 +38,9 @@ internal static class Program
             string clientId;
             string privateKeyPath;
             string certificateId;
+            string privateKey;
 
-            if (isDebug)
+            if (keys.isDebug)
             {
                 string envPath = "C:/Users/Andrew/Desktop/CloudRun Keys/On Hold Inventory/on-hold-inv-prod.env";
 
@@ -61,7 +64,8 @@ internal static class Program
                  clientId = Required("NETSUITE_CLIENT_ID");
                  certificateId = Required("NETSUITE_CERTIFICATE_ID");
 
-                 privateKeyPath = Required("NETSUITE_PRIVATE_KEY");
+                 privateKey = Required("NETSUITE_PRIVATE_KEY");
+                keys.privateKey = privateKey;
             }
 
                 string accountDomain = accountId.Trim().ToLowerInvariant().Replace('_', '-');
@@ -449,8 +453,15 @@ internal static class Program
         string unsignedJwt = $"{encodedHeader}.{encodedPayload}";
 
         using var rsa = RSA.Create();
-
-        string privateKey = await File.ReadAllTextAsync(privateKeyPath);
+        string privateKey;
+        if (keys.isDebug)
+        {
+            privateKey = await File.ReadAllTextAsync(privateKeyPath);
+        }
+        else
+        {
+            privateKey = keys.privateKey;
+        }
         rsa.ImportFromPem(privateKey);
 
         byte[] signature = rsa.SignData(Encoding.UTF8.GetBytes(unsignedJwt), HashAlgorithmName.SHA256, RSASignaturePadding.Pss);
