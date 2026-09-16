@@ -25,21 +25,48 @@ internal static class Program
         public int newQuantityOnHold { get; set; }
     }
 
+
+
     private static async Task Main(string[] args)
     {
         try
         {
-            string envPath = "C:/Users/Andrew/Desktop/CloudRun Keys/On Hold Inventory/on-hold-inv-prod.env";
+            bool isDebug = false;
+            string accountId;
+            string clientId;
+            string privateKeyPath;
+            string certificateId;
 
-            LoadEnvFile(envPath);
+            if (isDebug)
+            {
+                string envPath = "C:/Users/Andrew/Desktop/CloudRun Keys/On Hold Inventory/on-hold-inv-prod.env";
 
-            string accountId = Required("NETSUITE_ACCOUNT_ID");
-            string clientId = Required("NETSUITE_CLIENT_ID");
-            string certificateId = Required("NETSUITE_CERTIFICATE_ID");
-            string privateKeyPath = GetPrivateKeyPath(envPath);
+                LoadEnvFile(envPath);
 
-            string accountDomain = accountId.Trim().ToLowerInvariant().Replace('_', '-');
-            string baseUrl = $"https://{accountDomain}.suitetalk.api.netsuite.com";
+                 accountId = Required("NETSUITE_ACCOUNT_ID");
+                 clientId = Required("NETSUITE_CLIENT_ID");
+                 certificateId = Required("NETSUITE_CERTIFICATE_ID");
+                 privateKeyPath = GetPrivateKeyPath(envPath);
+            }
+            else
+            {
+                string? envPath = Environment.GetEnvironmentVariable("ENV_FILE_PATH");
+
+                if (!string.IsNullOrWhiteSpace(envPath))
+                {
+                    LoadEnvFile(envPath);
+                }
+
+                 accountId = Required("NETSUITE_ACCOUNT_ID");
+                 clientId = Required("NETSUITE_CLIENT_ID");
+                 certificateId = Required("NETSUITE_CERTIFICATE_ID");
+
+                 privateKeyPath = Required("NETSUITE_PRIVATE_KEY_PATH");
+            }
+
+                string accountDomain = accountId.Trim().ToLowerInvariant().Replace('_', '-');
+                string baseUrl = $"https://{accountDomain}.suitetalk.api.netsuite.com";
+            
 
             using var http = new HttpClient
             {
