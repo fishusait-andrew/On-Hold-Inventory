@@ -61,7 +61,7 @@ internal static class Program
                  clientId = Required("NETSUITE_CLIENT_ID");
                  certificateId = Required("NETSUITE_CERTIFICATE_ID");
 
-                 privateKeyPath = Required("NETSUITE_PRIVATE_KEY_PATH");
+                 privateKeyPath = Required("NETSUITE_PRIVATE_KEY");
             }
 
                 string accountDomain = accountId.Trim().ToLowerInvariant().Replace('_', '-');
