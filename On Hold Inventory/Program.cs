@@ -12,6 +12,7 @@ using System.Threading.Tasks;
 
 internal static class Program
 {
+    //fsbuufv
     private class Item
     {
         public int holdingArea { get; set; }
