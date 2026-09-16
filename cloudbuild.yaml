@@ -8,6 +8,14 @@ steps:
       - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_JOB}:$COMMIT_SHA
       - .
 
+  # Build the C# application and its container image.
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - -t
+      - ${_REGION}-docker.pkg.dev/$PROJECT_ID/${_REPOSITORY}/${_JOB}:$COMMIT_SHA
+      - .
+
   # Upload the image to Artifact Registry.
   - name: gcr.io/cloud-builders/docker
     args:
