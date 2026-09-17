@@ -33,6 +33,8 @@ internal static class Program
     {
         try
         {
+            Console.WriteLine($"INFO Event=RunStarted Utc={DateTimeOffset.UtcNow:O} DebugMode={keys.isDebug}");
+
             bool isDebug = false;
             string accountId;
             string clientId;
@@ -84,6 +86,8 @@ internal static class Program
             //REST is set up here and can begin doing things with NetSuite.
             await ProcessAllItemsAsync(http, baseUrl);
 
+            Console.WriteLine($"INFO Event=RunCompleted Utc={DateTimeOffset.UtcNow:O}");
+
 
 
             //use suite ql to getch batches of items their specific fields
@@ -102,7 +106,7 @@ internal static class Program
         }
         catch (Exception ex)
         {
-            Console.Error.WriteLine($"ERROR: {ex.Message}");
+            Console.Error.WriteLine($"ERROR Event=RunFailed Utc={DateTimeOffset.UtcNow:O} ExceptionType={ex.GetType().Name} Message={ex.Message}");
             Environment.ExitCode = 1;
         }
     }
@@ -128,6 +132,8 @@ internal static class Program
         long lastItemId = 0;
         int batchNumber = 0;
 
+        Console.WriteLine($"INFO Phase=ItemScan Event=Started BatchSize={batchSize}");
+
         while (true)
         {
             // Retrieve the next group of item IDs automatically.
@@ -135,6 +141,7 @@ internal static class Program
 
             if (itemRows.Count == 0)
             {
+                Console.WriteLine($"INFO Phase=ItemScan Event=NoMoreItems LastItemId={lastItemId} CompletedBatches={batchNumber}");
                 break;
             }
 
@@ -168,23 +175,20 @@ internal static class Program
 
             try
             {
-                Console.WriteLine($"Starting batch {batchNumber}: {items.Count} items.");
+                Console.WriteLine($"INFO Phase=BatchProcessing Event=Started Batch={batchNumber} ItemCount={items.Count} FirstItemId={items[0].internalId} LastItemId={nextItemId}");
 
                 List<JsonElement> locationRows = await GetItemsLocationsAsync(http, baseUrl, ids);
                 List<JsonElement> statusRows = await GetInventoryStatusAsync(http, baseUrl, ids);
 
                 // Both result sets are fully retrieved before processing.
-                Console.WriteLine($"Retrieved {locationRows.Count} location rows and {statusRows.Count} inventory status rows.");
+                Console.WriteLine($"INFO Phase=BatchProcessing Event=InventoryRetrieved Batch={batchNumber} ItemCount={items.Count} LocationRows={locationRows.Count} InventoryStatusRows={statusRows.Count}");
 
                 foreach (Item item in items)
                 {
-                    Console.WriteLine($"Item {item.internalId}");
-
                     foreach (JsonElement locationRow in locationRows)
                     {
                         if (long.Parse(locationRow.GetProperty("item").ToString(), System.Globalization.CultureInfo.InvariantCulture) == item.internalId)
                         {
-                            Console.WriteLine($"Location: {locationRow.GetRawText()}");
                         }
                     }
 
@@ -192,7 +196,6 @@ internal static class Program
                     {
                         if (long.Parse(statusRow.GetProperty("item").ToString(), System.Globalization.CultureInfo.InvariantCulture) == item.internalId)
                         {
-                            Console.WriteLine($"Inventory status: {statusRow.GetRawText()}");
                         }
                     }
                 }
@@ -201,47 +204,66 @@ internal static class Program
                 // Each Item already has its internal ID.
                 foreach (var item in items)
                 {
-                    List<JsonElement> itemLocations = locationRows.FindAll(row => long.Parse(row.GetProperty("item").ToString()) == item.internalId);
-                    List<JsonElement> itemStatuses = statusRows.FindAll(row => long.Parse(row.GetProperty("item").ToString()) == item.internalId);
+                    try
+                    {
+                        List<JsonElement> itemLocations = locationRows.FindAll(row => long.Parse(row.GetProperty("item").ToString()) == item.internalId);
+                        List<JsonElement> itemStatuses = statusRows.FindAll(row => long.Parse(row.GetProperty("item").ToString()) == item.internalId);
 
-                    await ParseItemsToClass(item, itemLocations, itemStatuses);
+                        await ParseItemsToClass(item, itemLocations, itemStatuses);
+                        Console.WriteLine($"INFO Phase=ItemCalculation Event=Completed Batch={batchNumber} ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold} HoldingArea={item.holdingArea} Office={item.office} ConsumerShow={item.consumerShow} HoldingStatus={item.holding} WarrantyStatus={item.warranty}");
+                    }
+                    catch (Exception ex)
+                    {
+                        Console.Error.WriteLine($"ERROR Phase=ItemCalculation Event=Failed Batch={batchNumber} ItemId={item.internalId} ExceptionType={ex.GetType().Name} Message={ex.Message}");
+                        throw;
+                    }
                 }
 
                 //call update method here to update the items with the new quantity on hold values
                 await UpdateItemsAsync(http, baseUrl, items);
+                Console.WriteLine($"INFO Phase=BatchProcessing Event=Completed Batch={batchNumber} ItemCount={items.Count} LastItemId={nextItemId}");
                 items.Clear();
             }
             catch (Exception ex)
             {
                 // Matches your comment: skip a failed batch and continue.
-                Console.Error.WriteLine($"Batch {batchNumber} failed. Item IDs: {ids}. Error: {ex.Message}");
+                Console.Error.WriteLine($"ERROR Phase=BatchProcessing Event=Failed Batch={batchNumber} ItemCount={items.Count} FirstItemId={items[0].internalId} LastItemId={nextItemId} ExceptionType={ex.GetType().Name} Message={ex.Message}");
                 Environment.ExitCode = 1;
             }
             lastItemId = nextItemId;
 
         }
         
-        Console.WriteLine("Finished scanning items.");
+        Console.WriteLine($"INFO Phase=ItemScan Event=Completed CompletedBatches={batchNumber} LastItemId={lastItemId}");
     }
     private static async System.Threading.Tasks.Task UpdateItemsAsync(HttpClient http, string baseUrl, List<Item> items)
     {
         foreach (var item in items)
         {
-            if(item.oldQuantityOnHold == item.newQuantityOnHold)
+            try
             {
-                Console.WriteLine($"Item {item.internalId} has no change in quantity on hold. Skipping update.");
-                continue;
+                if(item.oldQuantityOnHold == item.newQuantityOnHold)
+                {
+                    Console.WriteLine($"INFO Phase=ItemUpdate Event=Skipped Reason=NoChange ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold}");
+                    continue;
+                }
+                string url = $"{baseUrl}/services/rest/record/v1/inventoryItem/{item.internalId}";
+                var updateData = new
+                {
+                    custitem_on_hold_inventory = item.newQuantityOnHold
+                };
+                using var request = new HttpRequestMessage(HttpMethod.Patch, url);
+                request.Content = new StringContent(JsonSerializer.Serialize(updateData), Encoding.UTF8, "application/json");
+                Console.WriteLine($"INFO Phase=ItemUpdate Event=Started ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold}");
+                using var response = await http.SendAsync(request);
+                string body = await ReadSuccessfulResponseAsync(response, $"Updating item {item.internalId}");
+                Console.WriteLine($"INFO Phase=ItemUpdate Event=Completed ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold} HttpStatus={(int)response.StatusCode} ResponseBodyLength={body.Length}");
             }
-            string url = $"{baseUrl}/services/rest/record/v1/inventoryItem/{item.internalId}";
-            var updateData = new
+            catch (Exception ex)
             {
-                custitem_on_hold_inventory = item.newQuantityOnHold
-            };
-            using var request = new HttpRequestMessage(HttpMethod.Patch, url);
-            request.Content = new StringContent(JsonSerializer.Serialize(updateData), Encoding.UTF8, "application/json");
-            using var response = await http.SendAsync(request);
-            string body = await ReadSuccessfulResponseAsync(response, $"Updating item {item.internalId}");
-            Console.WriteLine($"Updated item {item.internalId}: {body}");
+                Console.Error.WriteLine($"ERROR Phase=ItemUpdate Event=Failed ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold} ExceptionType={ex.GetType().Name} Message={ex.Message}");
+                Environment.ExitCode = 1;
+            }
         }
     }
 
@@ -354,77 +376,94 @@ internal static class Program
             throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be between 1 and 1000.");
         }
 
-        Console.WriteLine($"[SuiteQL] Starting query: {query}");
+        Console.WriteLine($"INFO Phase=SuiteQL Event=Started QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} PageSize={pageSize} GetAllPages={getAllPages}");
         List<JsonElement> rows = new List<JsonElement>();
         int offset = 0;
 
-        while (true)
+        try
         {
-            string url = $"{baseUrl}/services/rest/query/v1/suiteql?limit={pageSize}&offset={offset}";
-
-            using var request = new HttpRequestMessage(HttpMethod.Post, url);
-            request.Headers.Add("Prefer", "transient");
-            request.Content = new StringContent(JsonSerializer.Serialize(new { q = query }), Encoding.UTF8, "application/json");
-
-            Console.WriteLine($"[SuiteQL] Request: offset={offset}, limit={pageSize}, getAllPages={getAllPages}");
-            using var response = await http.SendAsync(request);
-            Console.WriteLine($"[SuiteQL] Response: offset={offset}, HTTP={(int)response.StatusCode} {response.ReasonPhrase}");
-            string body = await ReadSuccessfulResponseAsync(response, "SuiteQL query");
-
-            using var document = JsonDocument.Parse(body);
-            JsonElement root = document.RootElement;
-            JsonElement pageItems = root.GetProperty("items");
-
-            foreach (JsonElement row in pageItems.EnumerateArray())
+            while (true)
             {
-                // Keep the row valid after JsonDocument is disposed.
-                rows.Add(row.Clone());
+                string url = $"{baseUrl}/services/rest/query/v1/suiteql?limit={pageSize}&offset={offset}";
+
+                using var request = new HttpRequestMessage(HttpMethod.Post, url);
+                request.Headers.Add("Prefer", "transient");
+                request.Content = new StringContent(JsonSerializer.Serialize(new { q = query }), Encoding.UTF8, "application/json");
+
+                Console.WriteLine($"INFO Phase=SuiteQL Event=RequestStarted QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} Offset={offset} Limit={pageSize} GetAllPages={getAllPages}");
+                using var response = await http.SendAsync(request);
+                Console.WriteLine($"INFO Phase=SuiteQL Event=ResponseReceived QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} Offset={offset} HttpStatus={(int)response.StatusCode} ReasonPhrase={response.ReasonPhrase}");
+                string body = await ReadSuccessfulResponseAsync(response, "SuiteQL query");
+
+                using var document = JsonDocument.Parse(body);
+                JsonElement root = document.RootElement;
+                JsonElement pageItems = root.GetProperty("items");
+
+                foreach (JsonElement row in pageItems.EnumerateArray())
+                {
+                    // Keep the row valid after JsonDocument is disposed.
+                    rows.Add(row.Clone());
+                }
+
+                bool hasMore = root.GetProperty("hasMore").GetBoolean();
+                Console.WriteLine($"INFO Phase=SuiteQL Event=PageProcessed QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} Offset={offset} PageRows={pageItems.GetArrayLength()} AccumulatedRows={rows.Count} HasMore={hasMore}");
+
+                if (!getAllPages || !hasMore)
+                {
+                    break;
+                }
+
+                if (pageItems.GetArrayLength() == 0)
+                {
+                    throw new InvalidOperationException("NetSuite reported more results but returned an empty page.");
+                }
+
+                offset += pageSize;
             }
 
-            bool hasMore = root.GetProperty("hasMore").GetBoolean();
-            Console.WriteLine($"[SuiteQL] Page: requestedOffset={offset}, rows={pageItems.GetArrayLength()}, accumulatedRows={rows.Count}, hasMore={hasMore}");
-
-            if (!getAllPages || !hasMore)
-            {
-                break;
-            }
-
-            if (pageItems.GetArrayLength() == 0)
-            {
-                throw new InvalidOperationException("NetSuite reported more results but returned an empty page.");
-            }
-
-            offset += pageSize;
+            Console.WriteLine($"INFO Phase=SuiteQL Event=Completed QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} TotalRows={rows.Count}");
+            return rows;
         }
-
-        return rows;
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ERROR Phase=SuiteQL Event=Failed QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} Offset={offset} AccumulatedRows={rows.Count} ExceptionType={ex.GetType().Name} Message={ex.Message}");
+            throw;
+        }
     }
     private static async Task AuthenticateAsync(HttpClient http, string baseUrl, string clientId, string certificateId, string privateKeyPath)
     {
-        Console.WriteLine("Authenticating with NetSuite...");
-
-        string tokenUrl = $"{baseUrl}/services/rest/auth/oauth2/v1/token";
-        string signedJwt = await CreateSignedJwtAsync(tokenUrl, clientId, certificateId, privateKeyPath);
-
-        using var tokenForm = new FormUrlEncodedContent(new Dictionary<string, string>
+        try
         {
-            ["grant_type"] = "client_credentials",
-            ["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
-            ["client_assertion"] = signedJwt
-        });
+            Console.WriteLine("INFO Phase=Authentication Event=Started");
 
-        using var response = await http.PostAsync(tokenUrl, tokenForm);
-        string body = await ReadSuccessfulResponseAsync(response, "Authentication");
+            string tokenUrl = $"{baseUrl}/services/rest/auth/oauth2/v1/token";
+            string signedJwt = await CreateSignedJwtAsync(tokenUrl, clientId, certificateId, privateKeyPath);
 
-        using var tokenJson = JsonDocument.Parse(body);
+            using var tokenForm = new FormUrlEncodedContent(new Dictionary<string, string>
+            {
+                ["grant_type"] = "client_credentials",
+                ["client_assertion_type"] = "urn:ietf:params:oauth:client-assertion-type:jwt-bearer",
+                ["client_assertion"] = signedJwt
+            });
 
-        string accessToken = tokenJson.RootElement.GetProperty("access_token").GetString()
-            ?? throw new InvalidOperationException("NetSuite did not return an access token.");
+            using var response = await http.PostAsync(tokenUrl, tokenForm);
+            string body = await ReadSuccessfulResponseAsync(response, "Authentication");
 
-        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
-        http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+            using var tokenJson = JsonDocument.Parse(body);
 
-        Console.WriteLine("Authentication successful.");
+            string accessToken = tokenJson.RootElement.GetProperty("access_token").GetString()
+                ?? throw new InvalidOperationException("NetSuite did not return an access token.");
+
+            http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", accessToken);
+            http.DefaultRequestHeaders.Accept.Add(new MediaTypeWithQualityHeaderValue("application/json"));
+
+            Console.WriteLine("INFO Phase=Authentication Event=Completed");
+        }
+        catch (Exception ex)
+        {
+            Console.Error.WriteLine($"ERROR Phase=Authentication Event=Failed ExceptionType={ex.GetType().Name} Message={ex.Message}");
+            throw;
+        }
     }
 
     private static async Task<string> CreateSignedJwtAsync(string tokenUrl, string clientId, string certificateId, string privateKeyPath)
@@ -509,9 +548,11 @@ internal static class Program
         // Cloud Run can supply environment variables directly.
         if (!File.Exists(path))
         {
-            Console.WriteLine($"No .env file at {path}; using environment variables.");
+            Console.WriteLine($"INFO Phase=Configuration Event=EnvFileNotFound Source=EnvironmentVariables Path={path}");
             return;
         }
+
+        Console.WriteLine($"INFO Phase=Configuration Event=EnvFileLoading Path={path}");
 
         foreach (string rawLine in File.ReadLines(path))
         {
@@ -544,5 +585,7 @@ internal static class Program
                 Environment.SetEnvironmentVariable(name, value);
             }
         }
+
+        Console.WriteLine($"INFO Phase=Configuration Event=EnvFileLoaded Path={path}");
     }
 }
