@@ -154,13 +154,10 @@ internal static class Program
 
             try
             {
-                Console.WriteLine($"INFO Phase=BatchProcessing Event=Started Batch={batchNumber} ItemCount={items.Count} FirstItemId={items[0].internalId} LastItemId={nextItemId}");
-
                 List<JsonElement> locationRows = await GetItemsLocationsAsync(http, baseUrl, ids);
                 List<JsonElement> statusRows = await GetInventoryStatusAsync(http, baseUrl, ids);
 
                 // Both result sets are fully retrieved before processing.
-                Console.WriteLine($"INFO Phase=BatchProcessing Event=InventoryRetrieved Batch={batchNumber} ItemCount={items.Count} LocationRows={locationRows.Count} InventoryStatusRows={statusRows.Count}");
 
                 foreach (Item item in items)
                 {
@@ -200,7 +197,10 @@ internal static class Program
 
                 //call update method here to update the items with the new quantity on hold values
                 await UpdateItemsAsync(http, baseUrl, items);
-                Console.WriteLine($"INFO Phase=BatchProcessing Event=Completed Batch={batchNumber} ItemCount={items.Count} LastItemId={nextItemId}");
+                if (batchNumber % 100 == 0)
+                {
+                    Console.WriteLine($"INFO Phase=ItemScan Event=Progress CompletedBatches={batchNumber} LastItemId={nextItemId}");
+                }
                 items.Clear();
             }
             catch (Exception ex)
@@ -233,10 +233,8 @@ internal static class Program
                 };
                 using var request = new HttpRequestMessage(HttpMethod.Patch, url);
                 request.Content = new StringContent(JsonSerializer.Serialize(updateData), Encoding.UTF8, "application/json");
-                Console.WriteLine($"INFO Phase=ItemUpdate Event=Started ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold}");
                 using var response = await http.SendAsync(request);
-                string body = await ReadSuccessfulResponseAsync(response, $"Updating item {item.internalId}");
-                Console.WriteLine($"INFO Phase=ItemUpdate Event=Completed ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold} HttpStatus={(int)response.StatusCode} ResponseBodyLength={body.Length}");
+                await ReadSuccessfulResponseAsync(response, $"Updating item {item.internalId}");
             }
             catch (Exception ex)
             {
@@ -355,7 +353,6 @@ internal static class Program
             throw new ArgumentOutOfRangeException(nameof(pageSize), "Page size must be between 1 and 1000.");
         }
 
-        Console.WriteLine($"INFO Phase=SuiteQL Event=Started QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} PageSize={pageSize} GetAllPages={getAllPages}");
         List<JsonElement> rows = new List<JsonElement>();
         int offset = 0;
 
@@ -369,9 +366,7 @@ internal static class Program
                 request.Headers.Add("Prefer", "transient");
                 request.Content = new StringContent(JsonSerializer.Serialize(new { q = query }), Encoding.UTF8, "application/json");
 
-                Console.WriteLine($"INFO Phase=SuiteQL Event=RequestStarted QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} Offset={offset} Limit={pageSize} GetAllPages={getAllPages}");
                 using var response = await http.SendAsync(request);
-                Console.WriteLine($"INFO Phase=SuiteQL Event=ResponseReceived QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} Offset={offset} HttpStatus={(int)response.StatusCode} ReasonPhrase={response.ReasonPhrase}");
                 string body = await ReadSuccessfulResponseAsync(response, "SuiteQL query");
 
                 using var document = JsonDocument.Parse(body);
@@ -385,7 +380,6 @@ internal static class Program
                 }
 
                 bool hasMore = root.GetProperty("hasMore").GetBoolean();
-                Console.WriteLine($"INFO Phase=SuiteQL Event=PageProcessed QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} Offset={offset} PageRows={pageItems.GetArrayLength()} AccumulatedRows={rows.Count} HasMore={hasMore}");
 
                 if (!getAllPages || !hasMore)
                 {
@@ -400,7 +394,6 @@ internal static class Program
                 offset += pageSize;
             }
 
-            Console.WriteLine($"INFO Phase=SuiteQL Event=Completed QueryType={(query.Contains("AggregateItemLocation", StringComparison.OrdinalIgnoreCase) ? "AggregateItemLocation" : query.Contains("InventoryBalance", StringComparison.OrdinalIgnoreCase) ? "InventoryBalance" : "ItemBatch")} TotalRows={rows.Count}");
             return rows;
         }
         catch (Exception ex)
