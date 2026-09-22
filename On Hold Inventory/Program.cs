@@ -10,7 +10,9 @@ using System.Threading.Tasks;
 
 internal static class Program
 {
-    //fsbuufv
+    //When true this will use local env pathing
+    //When false this will use cloudrun setup
+    private static readonly bool isDebug = false;
     private class Item
     {
         public int holdingArea { get; set; }
@@ -22,56 +24,33 @@ internal static class Program
         public int oldQuantityOnHold { get; set; }
         public int newQuantityOnHold { get; set; }
     }
-    //fsvdsv
-    public static class keys
-    {
-        public static bool isDebug { get; set; } = false;
-        public static string privateKey { get; set; } = "";
-    }
 
     private static async Task Main(string[] args)
     {
         try
         {
-            Console.WriteLine($"INFO Event=RunStarted Utc={DateTimeOffset.UtcNow:O} DebugMode={keys.isDebug}");
-
-            bool isDebug = false;
-            string accountId;
-            string clientId;
-            string privateKeyPath;
-            string certificateId;
+            Console.WriteLine($"INFO Event=RunStarted Utc={DateTimeOffset.UtcNow:O} DebugMode={isDebug}");
             string privateKey;
-
-            if (keys.isDebug)
+            if (isDebug)
             {
-                string envPath = "C:/Users/Andrew/Desktop/CloudRun Keys/On Hold Inventory/on-hold-inv-prod.env";
+                string envPath = "C:/Keys/NetsuiteREST/on-hold-inv-prod.env";
 
                 LoadEnvFile(envPath);
 
-                 accountId = Required("NETSUITE_ACCOUNT_ID");
-                 clientId = Required("NETSUITE_CLIENT_ID");
-                 certificateId = Required("NETSUITE_CERTIFICATE_ID");
-                 privateKeyPath = GetPrivateKeyPath(envPath);
+                string privateKeyPath = Required("NETSUITE_PRIVATE_KEY_PATH");
+                privateKey = File.ReadAllText(privateKeyPath);
             }
             else
             {
-                string? envPath = Environment.GetEnvironmentVariable("ENV_FILE_PATH");
-
-                if (!string.IsNullOrWhiteSpace(envPath))
-                {
-                    LoadEnvFile(envPath);
-                }
-
-                 accountId = Required("NETSUITE_ACCOUNT_ID");
-                 clientId = Required("NETSUITE_CLIENT_ID");
-                 certificateId = Required("NETSUITE_CERTIFICATE_ID");
-
                  privateKey = Required("NETSUITE_PRIVATE_KEY");
-                keys.privateKey = privateKey;
             }
 
-                string accountDomain = accountId.Trim().ToLowerInvariant().Replace('_', '-');
-                string baseUrl = $"https://{accountDomain}.suitetalk.api.netsuite.com";
+            string accountId = Required("NETSUITE_ACCOUNT_ID");
+            string clientId = Required("NETSUITE_CLIENT_ID");
+            string certificateId = Required("NETSUITE_CERTIFICATE_ID");
+
+            string accountDomain = accountId.Trim().ToLowerInvariant().Replace('_', '-');
+            string baseUrl = $"https://{accountDomain}.suitetalk.api.netsuite.com";
             
 
             using var http = new HttpClient
@@ -79,7 +58,7 @@ internal static class Program
                 Timeout = TimeSpan.FromSeconds(120)
             };
 
-            await AuthenticateAsync(http, baseUrl, clientId, certificateId, keys.privateKey);
+            await AuthenticateAsync(http, baseUrl, clientId, certificateId, privateKey);
 
             //items.Add(new Item{});
 
@@ -210,7 +189,7 @@ internal static class Program
                         List<JsonElement> itemStatuses = statusRows.FindAll(row => long.Parse(row.GetProperty("item").ToString()) == item.internalId);
 
                         await ParseItemsToClass(item, itemLocations, itemStatuses);
-                        Console.WriteLine($"INFO Phase=ItemCalculation Event=Completed Batch={batchNumber} ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold} HoldingArea={item.holdingArea} Office={item.office} ConsumerShow={item.consumerShow} HoldingStatus={item.holding} WarrantyStatus={item.warranty}");
+                        //Console.WriteLine($"INFO Phase=ItemCalculation Event=Completed Batch={batchNumber} ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold} HoldingArea={item.holdingArea} Office={item.office} ConsumerShow={item.consumerShow} HoldingStatus={item.holding} WarrantyStatus={item.warranty}");
                     }
                     catch (Exception ex)
                     {
@@ -244,7 +223,7 @@ internal static class Program
             {
                 if(item.oldQuantityOnHold == item.newQuantityOnHold)
                 {
-                    Console.WriteLine($"INFO Phase=ItemUpdate Event=Skipped Reason=NoChange ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold}");
+                    //Console.WriteLine($"INFO Phase=ItemUpdate Event=Skipped Reason=NoChange ItemId={item.internalId} OldQuantityOnHold={item.oldQuantityOnHold} NewQuantityOnHold={item.newQuantityOnHold}");
                     continue;
                 }
                 string url = $"{baseUrl}/services/rest/record/v1/inventoryItem/{item.internalId}";
@@ -512,18 +491,6 @@ internal static class Program
         }
 
         return body;
-    }
-
-    private static string GetPrivateKeyPath(string envPath)
-    {
-        string privateKeyPath = Required("NETSUITE_PRIVATE_KEY_PATH");
-
-        if (!Path.IsPathRooted(privateKeyPath))
-        {
-            privateKeyPath = Path.GetFullPath(privateKeyPath, Path.GetDirectoryName(envPath)!);
-        }
-
-        return privateKeyPath;
     }
 
     private static string Required(string name)
